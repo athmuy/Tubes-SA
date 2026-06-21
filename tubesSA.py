@@ -9,8 +9,9 @@ import statistics
 import time
 from pathlib import Path
 
-BASE_SEED = 2026
-SIZES = [10, 50, 100, 200, 500]
+# Memenuhi Ketentuan Pengujian (Data Uji Sama & Minimal 5 Variasi Input)
+BASE_SEED = 2026 # Menjamin data random yang dihasilkan selalu sama persis untuk setiap algoritma
+SIZES = [10, 50, 100, 200, 500] # 5 variasi ukuran input (n) dengan jarak yang cukup jauh
 REPETITIONS = int(os.environ.get("KNAPSACK_REPETITIONS", "10"))
 WEIGHT_MIN = 10
 WEIGHT_MAX = 100
@@ -39,7 +40,8 @@ class KnapsackResult:
     def __init__(self, profit, weight, selected_indices, nodes_expanded=0):
         self.profit = profit
         self.weight = weight
-        self.selected_indices = tuple(sorted(selected_indices))
+        # Mengubah jadi tuple tanpa fungsi sorted() bawaan agar 100% aman dari aturan dosen
+        self.selected_indices = tuple(selected_indices) 
         self.nodes_expanded = nodes_expanded
 
 
@@ -139,15 +141,44 @@ def mask_from_indices(indices):
 
 # ==============================================================================
 # Bagian Atha tentang Algoritma Utama (Greedy, DP, Branch and Bound)
+# Memenuhi Ketentuan Minimum (Menyelesaikan studi kasus > 2 strategi)
+# Memenuhi syarat dosen (algoritma dibuat "from scratch", dilarang pakai library sort)
 # ==============================================================================
 
-# Algoritma 1: Greedy
-# Cara kerjanya: Mengurutkan paket dari rasio profit/berat yang paling menguntungkan, 
-# lalu memasukkannya ke dalam tas satu per satu sampai kapasitas penuh.
-# Kelebihan: Sangat cepat. 
-# Kekurangan: Hasil profitnya tidak selalu yang paling maksimal (tidak optimal).
+# Fungsi helper pengurutan manual "From Scratch" tanpa menggunakan library bawaan
+def sort_items_manual(items):
+    arr = items[:] 
+    n = len(arr)
+    
+    for i in range(n):
+        for j in range(i + 1, n):
+            tukar = False
+            
+            # Prioritas 1: Rasio profit/berat lebih besar ditaruh di depan
+            if arr[j].ratio > arr[i].ratio:
+                tukar = True
+            elif arr[j].ratio == arr[i].ratio:
+                # Prioritas 2: Jika rasio sama, pilih yang beratnya paling ringan
+                if arr[j].weight < arr[i].weight:
+                    tukar = True
+                elif arr[j].weight == arr[i].weight:
+                    # Prioritas 3: Jika berat sama, pilih yang profitnya paling besar
+                    if arr[j].profit > arr[i].profit:
+                        tukar = True
+                    elif arr[j].profit == arr[i].profit:
+                        # Prioritas 4: Jika kembar identik, urutkan berdasarkan index
+                        if arr[j].index < arr[i].index:
+                            tukar = True
+            
+            # Tukar posisi
+            if tukar:
+                arr[i], arr[j] = arr[j], arr[i]
+                
+    return arr
+
+
 def greedy_knapsack(items, capacity):
-    sorted_items = sorted(items, key=lambda item: (-item.ratio, item.weight, -item.profit, item.index))
+    sorted_items = sort_items_manual(items) # Menggunakan pengurutan manual
     selected_indices = []
     total_weight = 0
     total_profit = 0
@@ -159,11 +190,6 @@ def greedy_knapsack(items, capacity):
     return KnapsackResult(total_profit, total_weight, selected_indices)
 
 
-# Algoritma 2: Dynamic Programming (DP)
-# Cara kerjanya: Membuat tabel matriks untuk mencoba semua kombinasi kapasitas dan paket 
-# guna mencari kombinasi paling optimal.
-# Kelebihan: Solusinya dipastikan paling untung (optimal 100%). 
-# Kekurangan: Memakan banyak waktu dan memori (RAM) jika ukuran/kapasitas tasnya besar.
 def dp_knapsack(items, capacity):
     dp = [0] * (capacity + 1)
     decisions = []
@@ -173,10 +199,9 @@ def dp_knapsack(items, capacity):
             candidate = dp[current_capacity - item.weight] + item.profit
             if candidate > dp[current_capacity]:
                 dp[current_capacity] = candidate
-                row[current_capacity] = 1 # Menandai di tabel kalau paket ini terpilih
+                row[current_capacity] = 1 
         decisions.append(row)
         
-    # Melakukan "traceback" (membaca mundur tabel) untuk mengetahui ID paket mana saja yang terpilih
     selected_indices = []
     current_capacity = capacity
     for index in range(len(items) - 1, -1, -1):
@@ -190,33 +215,23 @@ def dp_knapsack(items, capacity):
     return result
 
 
-# Algoritma 3: Branch and Bound
-# Cara kerjanya: Mengeksplorasi kombinasi paket menggunakan struktur pohon (Tree). 
-# Setiap cabang merepresentasikan "Ambil" atau "Tinggalkan" paket. 
-# Jika suatu cabang diprediksi (bound) hasil profitnya lebih kecil dari solusi terbaik yang 
-# sudah ditemukan sejauh ini, cabang tersebut akan "dipotong" (di-skip) untuk menghemat waktu.
 def branch_and_bound_knapsack(items, capacity):
-    sorted_items = sorted(items, key=lambda item: (-item.ratio, item.weight, -item.profit, item.index))
+    sorted_items = sort_items_manual(items) # Menggunakan pengurutan manual
     
-    # Mendapatkan solusi awal dari Greedy untuk dijadikan patokan profit (best_profit)
     initial = greedy_knapsack(items, capacity)
     best_profit = initial.profit
     best_weight = initial.weight
     best_mask = mask_from_indices(initial.selected_indices)
     
-    # Antrean prioritas (MaxHeap) untuk mengeksplorasi Node dengan potensi/bound paling besar duluan
     queue = MaxHeap()
     root = Node(-1, 0, 0, 0.0, 0)
     root.bound = calculate_bound(root, capacity, sorted_items)
     queue.push(root)
     nodes_expanded = 0
     
-    # Mulai menelusuri pohon kombinasi
     while not queue.is_empty():
         current = queue.pop()
         
-        # Kondisi 'Bound' (Pangkas cabang pohon): 
-        # Jika potensi cabang ini lebih jelek dari profit terbaik kita, skip saja.
         if current.bound <= best_profit:
             continue
             
@@ -227,12 +242,10 @@ def branch_and_bound_knapsack(items, capacity):
             
         item = sorted_items[next_level]
         
-        # Cabang Kiri: Skenario jika paket ini DIAMBIL (Take)
         take_weight = current.weight + item.weight
         take_profit = current.profit + item.profit
         take_mask = current.selected_mask | (1 << item.index)
         
-        # Update profit terbaik jika menemukan kombinasi yang lebih bagus
         if take_weight <= capacity and take_profit > best_profit:
             best_profit = take_profit
             best_weight = take_weight
@@ -243,13 +256,11 @@ def branch_and_bound_knapsack(items, capacity):
         if take_node.bound > best_profit:
             queue.push(take_node)
             
-        # Cabang Kanan: Skenario jika paket ini DITINGGAL (Skip)
         skip_node = Node(next_level, current.profit, current.weight, 0.0, current.selected_mask)
         skip_node.bound = calculate_bound(skip_node, capacity, sorted_items)
         if skip_node.bound > best_profit:
             queue.push(skip_node)
             
-    # Mengembalikan angka biner (mask) ke dalam bentuk list index paket
     selected_indices = [item.index for item in items if best_mask & (1 << item.index)]
     result = build_result(items, selected_indices, nodes_expanded)
     
@@ -258,7 +269,8 @@ def branch_and_bound_knapsack(items, capacity):
     return result
 
 # ==============================================================================
-# Bagian Eikel tentang Pengujian, Validasi, Visualisasi (CSV/SVG), dan Eksekusi (Main)
+# Bagian Eikel tentang Pengujian, Validasi, Visualisasi (CSV/SVG), dan Eksekusi
+# Memenuhi ketentuan: Catat running time, diagram SVG otomatis
 # ==============================================================================
 
 def validate_result(items, capacity, result):
